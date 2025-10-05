@@ -1,0 +1,247 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Missionaries & Cannibals — Interactive Tool</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 20px; }
+    h1 { font-size: 20px; }
+    .bank { display:inline-block; vertical-align:top; width:40%; min-height:180px; padding:10px; border:2px solid #333; border-radius:6px; margin:5px;}
+    .center { display:inline-block; width:14%; text-align:center; vertical-align:top; }
+    .person { display:inline-block; width:36px; height:36px; line-height:36px; margin:4px; border-radius:50%; background:#eee; border:1px solid #999; }
+    .M { background: linear-gradient(#d0f0ff,#8fd6ff); } /* missionary */
+    .C { background: linear-gradient(#ffd0d0,#ff8f8f); } /* cannibal */
+    .boat { margin:10px auto; padding:8px; border:2px solid #444; border-radius:6px; width:140px; background:#fafafa; }
+    button { margin:5px; padding:8px 10px; }
+    #moves { margin-top:10px; max-height:180px; overflow:auto; border:1px dashed #ccc; padding:8px; background:#fff; }
+    .invalid { color:#b00; font-weight:bold; }
+    .valid { color:#080; font-weight:bold; }
+    .controls { margin-top:12px; }
+    .hint { font-size:13px; color:#555; }
+    .edge { font-size:12px; color:#444; }
+    footer { margin-top:18px; font-size:12px; color:#666; }
+  </style>
+</head>
+<body>
+  <h1>Missionaries &amp; Cannibals — Interactive Simulator</h1>
+  <p>Boat capacity: up to 2 people. Safety rule: on either bank, if missionaries > 0 then missionaries must be >= cannibals.</p>
+  <div>
+    <div class="bank" id="leftBank">
+      <h3>Left Bank (<span id="leftCounts">3M, 3C</span>)</h3>
+      <div id="leftPeople"></div>
+    </div>
+
+    <div class="center">
+      <div id="boatArea" class="boat">
+        <div><strong>Boat</strong></div>
+        <div>Location: <span id="boatLoc">Left</span></div>
+        <div>On board: <span id="boatOn">—</span></div>
+      </div>
+      <div class="controls">
+        <div><strong>Actions</strong></div>
+        <button onclick="tryMove(1,0)">Move 1 Missionary</button>
+        <button onclick="tryMove(0,1)">Move 1 Cannibal</button>
+        <button onclick="tryMove(2,0)">Move 2 Missionaries</button>
+        <button onclick="tryMove(0,2)">Move 2 Cannibals</button>
+        <button onclick="tryMove(1,1)">Move 1M + 1C</button>
+        <div style="margin-top:6px;">
+          <button onclick="autoSolve()">Auto-solve (BFS)</button>
+          <button onclick="resetState()">Reset</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="bank" id="rightBank">
+      <h3>Right Bank (<span id="rightCounts">0M, 0C</span>)</h3>
+      <div id="rightPeople"></div>
+    </div>
+  </div>
+
+  <div style="margin-top:12px;">
+    <strong>Status:</strong> <span id="statusText" class="valid">All good — safe state.</span>
+    <div class="hint">Tip: Try the classic solution or use Auto-solve to see the shortest sequence.</div>
+  </div>
+
+  <div id="moves">
+    <strong>Move history:</strong>
+    <ol id="historyList"></ol>
+  </div>
+
+  <footer>Download this file and open in a modern browser. This is a self-contained interactive tool.</footer>
+
+<script>
+// State: counts on left bank (M_left, C_left) and boat location 'L' or 'R'
+let state = { M: 3, C: 3, B: 'L' };
+let history = [];
+
+// Utility functions
+function updateDisplay() {
+  document.getElementById('leftCounts').innerText = state.M + 'M, ' + state.C + 'C';
+  const Mr = 3 - state.M, Cr = 3 - state.C;
+  document.getElementById('rightCounts').innerText = Mr + 'M, ' + Cr + 'C';
+  document.getElementById('boatLoc').innerText = (state.B === 'L') ? 'Left' : 'Right';
+  document.getElementById('boatOn').innerText = '—';
+
+  // populate left people
+  const leftDiv = document.getElementById('leftPeople');
+  const rightDiv = document.getElementById('rightPeople');
+  leftDiv.innerHTML = '';
+  rightDiv.innerHTML = '';
+  for (let i=0;i<state.M;i++){ leftDiv.appendChild(makePerson('M')); }
+  for (let i=0;i<state.C;i++){ leftDiv.appendChild(makePerson('C')); }
+  for (let i=0;i<Mr;i++){ rightDiv.appendChild(makePerson('M')); }
+  for (let i=0;i<Cr;i++){ rightDiv.appendChild(makePerson('C')); }
+
+  // status check
+  const status = isValidState(state.M, state.C);
+  const txt = document.getElementById('statusText');
+  if (status.valid) { txt.className='valid'; txt.innerText = 'All good — safe state.'; }
+  else { txt.className='invalid'; txt.innerText = 'Invalid state: ' + status.message; }
+
+  // update history
+  const ol = document.getElementById('historyList');
+  ol.innerHTML = '';
+  for (const entry of history) {
+    const li = document.createElement('li');
+    li.innerText = entry;
+    ol.appendChild(li);
+  }
+}
+
+function makePerson(type){
+  const el = document.createElement('div');
+  el.className = 'person ' + type;
+  el.innerText = type;
+  return el;
+}
+
+function isValidState(M,C){
+  // returns object {valid:boolean, message:string}
+  if (M < 0 || C < 0 || M > 3 || C > 3) return {valid:false, message:'counts out of range'};
+  // left bank safety
+  if (M > 0 && M < C) return {valid:false, message:'Left bank: missionaries outnumbered'};
+  const Mr = 3 - M, Cr = 3 - C;
+  if (Mr > 0 && Mr < Cr) return {valid:false, message:'Right bank: missionaries outnumbered'};
+  return {valid:true, message:''};
+}
+
+function tryMove(m,c){
+  // Attempt to move m missionaries and c cannibals from boat's bank to other bank.
+  if (m + c < 1 || m + c > 2) { alert('Boat must carry 1 or 2 people'); return; }
+  let newM = state.M, newC = state.C, newB = state.B === 'L' ? 'R' : 'L';
+  if (state.B === 'L'){ newM = state.M - m; newC = state.C - c; }
+  else { newM = state.M + m; newC = state.C + c; }
+
+  // check ranges
+  if (newM < 0 || newC < 0 || newM > 3 || newC > 3) { alert('Invalid move: not enough people on that bank'); return; }
+
+  const validity = isValidState(newM, newC);
+  if (!validity.valid) {
+    // Inform user and reject move
+    alert('Move would create an unsafe state: ' + validity.message);
+    return;
+  }
+
+  // commit move
+  const from = state.B === 'L' ? 'Left' : 'Right';
+  const to = state.B === 'L' ? 'Right' : 'Left';
+  state = { M: newM, C: newC, B: newB };
+  history.push(`${m}M + ${c}C: ${from} -> ${to}  => State (${state.M}, ${state.C}, ${state.B})`);
+  updateDisplay();
+
+  // check goal
+  if (state.M === 0 && state.C === 0 && state.B === 'R') {
+    alert('Congratulations — goal reached! All are on the right bank.');
+  }
+}
+
+// Reset
+function resetState(){
+  state = { M:3, C:3, B:'L' };
+  history = ['Start: (3,3,L)'];
+  updateDisplay();
+}
+
+// Auto-solve using BFS (shortest sequence of boat moves)
+function autoSolve(){
+  const solution = bfsSolve();
+  if (!solution) { alert('No solution found (unexpected)'); return; }
+  // Show moves step-by-step with a short delay
+  if (!confirm('Auto-solve will execute the shortest sequence of moves. Proceed?')) return;
+  // Reset first
+  resetState();
+  // skip the initial state in solution (it's the start)
+  let idx = 1;
+  function step(){
+    if (idx >= solution.length) return;
+    const s0 = solution[idx-1];
+    const s1 = solution[idx];
+    // compute what moved: difference in M and C on left bank
+    const dm = Math.abs(s1[0] - s0[0]);
+    const dc = Math.abs(s1[1] - s0[1]);
+    // Determine direction
+    const from = s0[2] === 'L' ? 'Left' : 'Right';
+    const to = s1[2] === 'L' ? 'Left' : 'Right';
+    history.push(`${dm}M + ${dc}C: ${from} -> ${to}  => State (${s1[0]}, ${s1[1]}, ${s1[2]})`);
+    state = { M: s1[0], C: s1[1], B: s1[2] };
+    updateDisplay();
+    idx += 1;
+    setTimeout(step, 900);
+  }
+  step();
+}
+
+// BFS solver returns array of states from start to goal or null
+function bfsSolve(){
+  const start = [3,3,'L'];
+  const goal = [0,0,'R'];
+  function key(s){ return `${s[0]},${s[1]},${s[2]}`; }
+  const moves = [[1,0],[2,0],[0,1],[0,2],[1,1]];
+  const q = [start];
+  const parent = {}; parent[key(start)] = null;
+  while (q.length){
+    const cur = q.shift();
+    if (cur[0]===goal[0] && cur[1]===goal[1] && cur[2]===goal[2]) break;
+    for (const mv of moves){
+      const m = mv[0], c = mv[1];
+      let nxt;
+      if (cur[2] === 'L') nxt = [cur[0]-m, cur[1]-c, 'R'];
+      else nxt = [cur[0]+m, cur[1]+c, 'L'];
+      // bounds check
+      if (nxt[0] <0 || nxt[0]>3 || nxt[1]<0 || nxt[1]>3) continue;
+      // safety check
+      if (!isValid(nxt[0], nxt[1])) continue;
+      const k = key(nxt);
+      if (!(k in parent)){
+        parent[k] = cur;
+        q.push(nxt);
+      }
+    }
+  }
+  const goalKey = key(goal);
+  if (!(goalKey in parent)) return null;
+  // reconstruct path
+  const path = [];
+  let cur = goal;
+  while (cur){
+    path.push(cur);
+    cur = parent[key(cur)];
+  }
+  path.reverse();
+  return path;
+}
+
+function isValid(M,C){
+  if (M > 0 && M < C) return false;
+  const Mr = 3-M, Cr = 3-C;
+  if (Mr > 0 && Mr < Cr) return false;
+  return true;
+}
+
+// Initialize
+resetState();
+</script>
+</body>
+</html>
